@@ -9,13 +9,7 @@ import { ChildProcess, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
-import {
-  DATA_DIR,
-  GROUPS_DIR,
-  ONECLI_API_KEY,
-  ONECLI_URL,
-  TIMEZONE,
-} from './config.js';
+import { DATA_DIR, GROUPS_DIR, ONECLI_API_KEY, ONECLI_URL, TIMEZONE } from './config.js';
 import { materializeContainerJson } from './container-config.js';
 import { composeGroupClaudeMd } from './claude-md-compose.js';
 import { getAgentGroup } from './db/agent-groups.js';

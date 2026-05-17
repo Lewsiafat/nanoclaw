@@ -12,7 +12,10 @@ import { enforceStartupBackoff, resetCircuitBreaker } from './circuit-breaker.js
 import { migrateGroupsToClaudeLocal } from './claude-md-compose.js';
 import { initDb } from './db/connection.js';
 import { runMigrations } from './db/migrations/index.js';
-import { ensureContainerRuntimeRunning, cleanupOrphans } from './container-runtime.js';
+import { ensureContainerRuntimeRunning, cleanupOrphans as cleanupContainerOrphans } from './container-runtime.js';
+import { cleanupOrphans as cleanupDirectOrphans } from './direct-runner.js';
+
+const USE_CONTAINERS = process.env.USE_CONTAINERS !== 'false';
 import { startActiveDeliveryPoll, startSweepDeliveryPoll, setDeliveryAdapter, stopDeliveryPolls } from './delivery.js';
 import { startHostSweep, stopHostSweep } from './host-sweep.js';
 import { routeInbound } from './router.js';
@@ -82,9 +85,14 @@ async function main(): Promise<void> {
   // 1c. One-time filesystem cutover — idempotent, no-op after first run.
   migrateGroupsToClaudeLocal();
 
-  // 2. Container runtime
-  ensureContainerRuntimeRunning();
-  cleanupOrphans();
+  // 2. Container runtime (skipped when USE_CONTAINERS=false)
+  if (USE_CONTAINERS) {
+    ensureContainerRuntimeRunning();
+    cleanupContainerOrphans();
+  } else {
+    log.info('Container mode disabled (USE_CONTAINERS=false), using direct runner');
+    cleanupDirectOrphans();
+  }
 
   // 3. Channel adapters
   await initChannelAdapters((adapter: ChannelAdapter): ChannelSetup => {

@@ -29,8 +29,9 @@ type ResponseFrame =
 // Paths
 // ---------------------------------------------------------------------------
 
-const INBOUND_DB = '/workspace/inbound.db';
-const OUTBOUND_DB = '/workspace/outbound.db';
+const _WORKSPACE = process.env.AGENT_WORKSPACE_DIR || '/workspace';
+const INBOUND_DB = `${_WORKSPACE}/inbound.db`;
+const OUTBOUND_DB = `${_WORKSPACE}/outbound.db`;
 
 // ---------------------------------------------------------------------------
 // DB transport

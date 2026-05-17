@@ -1,13 +1,14 @@
 /**
- * Runner config — reads /workspace/agent/container.json at startup.
+ * Runner config — reads container.json at startup.
  *
- * This file is mounted read-only inside the container. The host writes it;
- * the runner only reads. All NanoClaw-specific configuration lives here
- * instead of environment variables.
+ * This file is mounted read-only inside the container (or placed by the
+ * direct-runner). The host writes it; the runner only reads. All
+ * NanoClaw-specific configuration lives here instead of environment variables.
  */
 import fs from 'fs';
 
-const CONFIG_PATH = '/workspace/agent/container.json';
+export const WORKSPACE_DIR = process.env.AGENT_WORKSPACE_DIR || '/workspace';
+const CONFIG_PATH = `${WORKSPACE_DIR}/agent/container.json`;
 
 export interface RunnerConfig {
   provider: string;

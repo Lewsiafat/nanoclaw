@@ -1,263 +1,192 @@
 # No-Container Mode + Config CLI
 
 > Branch: `feature/no-container-cli-config`
-> Date: 2026-05-17
-> Status: Prototype / Test
+> Status: Wired end-to-end (was prototype-only on the initial commit; fully connected as of commit `01dc7f6`)
 
-## Overview
+## Goal
 
-This branch implements two features for running NanoClaw without Docker:
-
-1. **No-Container Mode** — replace Docker container spawning with a direct `bun` subprocess
-2. **Config CLI** — `ncl config` commands backed by `~/.config/nanoclaw/config.json`
+Make NanoClaw **easy to install** (no Docker required) and **easy to configure** (no `.env` editing). Keep the surface minimal — one runtime flag, one config file, one CLI command.
 
 ---
 
-## Feature 1: No-Container Mode
+## Walkthrough — From zero to first message
 
-### What Changed
-
-NanoClaw originally ran every agent session inside a Docker container. This removes that requirement — the agent-runner is spawned as a direct `bun` subprocess instead.
-
-#### Environment Flag
+### 0. Prerequisites
 
 ```bash
-USE_CONTAINERS=false   # default — run agent directly via bun
-USE_CONTAINERS=true    # restore original Docker behaviour
+# Required
+node --version    # >= 20
+pnpm --version    # >= 9
+bun --version     # >= 1.1  — direct mode spawns the agent-runner as a bun process
+
+# Optional (only if you also want container mode)
+docker --version
 ```
 
-#### Files Modified
+If you don't have bun: `curl -fsSL https://bun.sh/install | bash`.
 
-| File | Change |
-|------|--------|
-| `container/agent-runner/src/config.ts` | Export `WORKSPACE_DIR` constant; read from `AGENT_WORKSPACE_DIR` env var (default: `/workspace` for Docker compat) |
-| `container/agent-runner/src/index.ts` | Replace hardcoded `CWD = '/workspace/agent'` with `${WORKSPACE_DIR}/agent` |
-| `container/agent-runner/src/db/connection.ts` | Replace hardcoded inbound/outbound/heartbeat paths with `AGENT_WORKSPACE_DIR` |
-| `container/agent-runner/src/cli/ncl.ts` | Replace hardcoded DB paths with `AGENT_WORKSPACE_DIR` |
-| `container/agent-runner/src/mcp-tools/core.ts` | Replace hardcoded `/workspace/agent` and `/workspace/outbox` paths |
-| `container/agent-runner/src/providers/claude.ts` | Replace hardcoded `/workspace/agent/conversations` path |
-| `container/agent-runner/src/formatter.ts` | Replace hardcoded `/workspace/${a.localPath}` with env var |
-| `src/direct-runner.ts` | **New** — drop-in replacement for `container-runner.ts` |
-| `src/index.ts` | Gate `ensureContainerRuntimeRunning` + `cleanupOrphans` behind `USE_CONTAINERS` flag |
-| `src/config.ts` | Add comments noting container image vars are no-ops in direct mode |
-
-#### New File: `src/direct-runner.ts`
-
-Exports the same interface as `container-runner.ts`:
-
-```ts
-wakeContainer(session: Session): Promise<boolean>
-killContainer(sessionId: string): Promise<void>
-cleanupOrphans(): Promise<void>
-getActiveContainerCount(): number
-isContainerRunning(sessionId: string): boolean
-```
-
-**How it works:**
-
-1. Creates a per-session workspace directory at `data/v2-sessions/{agentGroupId}/{sessionId}/workspace/`
-2. Writes `container.json` to `workspace/agent/container.json` (same format as Docker version)
-3. Symlinks group folder → `workspace/agent/` and global memory → `workspace/global/`
-4. Spawns: `bun run container/agent-runner/src/index.ts`
-5. Sets env vars:
-   - `AGENT_WORKSPACE_DIR` → session workspace path
-   - `TZ` → timezone from config
-   - `ONECLI_URL` + `ONECLI_API_KEY` → from host config
-6. Monitors process exit, cleans up on SIGTERM (5s SIGKILL fallback)
-
-**Workspace directory structure (per session):**
-
-```
-data/v2-sessions/{agentGroupId}/{sessionId}/workspace/
-├── agent/              ← symlink → groups/{groupName}/
-│   ├── CLAUDE.md
-│   ├── container.json  ← written by direct-runner
-│   └── ...
-├── global/             ← symlink → groups/global/
-├── inbound.db          ← host-owned (messages in)
-├── outbound.db         ← agent-owned (messages out)
-├── .heartbeat
-└── outbox/
-```
-
-### How to Run (No Docker)
-
-**Prerequisites:**
-- `bun` installed globally (`curl -fsSL https://bun.sh/install | bash`)
-- All other NanoClaw dependencies (`pnpm install`)
-
-**Start NanoClaw without Docker:**
+### 1. Clone and install
 
 ```bash
-# Default (no containers)
-npm run dev
-
-# Explicitly set flag
-USE_CONTAINERS=false npm run dev
-
-# Restore Docker mode
-USE_CONTAINERS=true npm run dev
-```
-
-### Known Limitations (TODOs)
-
-- Container isolation is removed — agent processes run with host user permissions
-- No resource limits (CPU/memory) unlike Docker containers
-- `cleanupOrphans()` only cleans up processes from the current run (no cross-restart tracking)
-- OneCLI Agent Vault integration not tested in direct mode
-- Additional mounts (`containerConfig.additionalMounts`) not implemented — marked with `TODO:` in code
-
----
-
-## Feature 2: Config CLI (`ncl config`)
-
-### Config File Location
-
-```
-~/.config/nanoclaw/config.json
-```
-
-Created automatically on first `ncl config set`.
-
-### Supported Keys
-
-| Key | Description | Default |
-|-----|-------------|---------|
-| `ASSISTANT_NAME` | Agent display name | `Andy` |
-| `TZ` | Timezone (IANA format) | `UTC` |
-| `ONECLI_URL` | OneCLI server URL | *(empty)* |
-| `ONECLI_API_KEY` | OneCLI API key *(masked in display)* | *(empty)* |
-| `CONTAINER_TIMEOUT` | Session timeout in ms | `1800000` |
-| `MAX_CONCURRENT_AGENTS` | Max concurrent agent sessions | `5` |
-
-### Commands
-
-#### `ncl config show`
-
-Print all config keys as a formatted table showing value, default, and source.
-
-```
-$ ncl config show
-
-Key                    Value              Default    Source
-─────────────────────────────────────────────────────────
-ASSISTANT_NAME         Leo                Andy       config
-TZ                     Asia/Taipei        UTC        config
-ONECLI_URL             http://localhost…  (empty)    config
-ONECLI_API_KEY         sk-o...key4        (empty)    config  [secret]
-CONTAINER_TIMEOUT      1800000            1800000    default
-MAX_CONCURRENT_AGENTS  5                  5          default
-```
-
-#### `ncl config get`
-
-Get a single key's value.
-
-```bash
-ncl config get --key ASSISTANT_NAME
-# → Leo
-```
-
-#### `ncl config set`
-
-Write a value to the config file.
-
-```bash
-ncl config set --key ASSISTANT_NAME --value Leo
-ncl config set --key TZ --value Asia/Taipei
-ncl config set --key ONECLI_API_KEY --value sk-or-v1-xxxxx
-ncl config set --key MAX_CONCURRENT_AGENTS --value 10
-```
-
-Numeric values are automatically coerced from strings.
-
-#### `ncl config reset`
-
-Remove a key from the config file (reverts to built-in default).
-
-```bash
-ncl config reset --key ASSISTANT_NAME
-# → ASSISTANT_NAME reset to default (Andy)
-```
-
-### Config File Format
-
-```json
-{
-  "ASSISTANT_NAME": "Leo",
-  "TZ": "Asia/Taipei",
-  "ONECLI_URL": "http://localhost:8080",
-  "ONECLI_API_KEY": "sk-or-v1-xxxxx",
-  "MAX_CONCURRENT_AGENTS": 10
-}
-```
-
-### New Files
-
-| File | Purpose |
-|------|---------|
-| `src/cli/resources/config.ts` | Registers `config show/get/set/reset` commands |
-| `src/cli/resources/index.ts` | Imports `config.ts` barrel (modified) |
-
----
-
-## Quick Start (Both Features Together)
-
-```bash
-# 1. Clone and install
 git clone https://github.com/Lewsiafat/nanoclaw
 cd nanoclaw
 git checkout feature/no-container-cli-config
 pnpm install
+cd container/agent-runner && bun install && cd -
+pnpm run build
+```
 
-# 2. Configure via CLI (no .env editing needed)
-npx tsx src/cli/client.ts config set --key ASSISTANT_NAME --value MyBot
-npx tsx src/cli/client.ts config set --key TZ --value Asia/Taipei
-npx tsx src/cli/client.ts config set --key ONECLI_URL --value http://localhost:8080
-npx tsx src/cli/client.ts config set --key ONECLI_API_KEY --value sk-or-v1-xxxxx
+### 2. Configure via CLI (no `.env` editing needed)
 
-# 3. Start (no Docker required)
-npm run dev
+The CLI server runs alongside the host. Boot the host once so the socket
+is alive, then in another terminal:
 
-# 4. Check config anytime
-npx tsx src/cli/client.ts config show
+```bash
+# In terminal A — start the host (it'll come up with defaults)
+USE_CONTAINERS=false pnpm run dev
+
+# In terminal B — set your config
+pnpm exec ncl config set --key ASSISTANT_NAME --value Leo
+pnpm exec ncl config set --key TZ --value Asia/Taipei
+pnpm exec ncl config set --key ONECLI_URL --value http://localhost:10254
+pnpm exec ncl config set --key ONECLI_API_KEY --value <your-key>
+
+pnpm exec ncl config show
+```
+
+Values land in `~/.config/nanoclaw/config.json` immediately, but the
+host reads them at module load — restart the host (Ctrl+C in terminal A,
+then re-run) for new values to take effect.
+
+### 3. Wire a channel
+
+Pick any channel skill, e.g. `/add-telegram`, and follow its setup. The
+channel adapter doesn't care about container vs. direct mode — it lands
+messages on the central DB exactly the same way.
+
+### 4. First message
+
+Send a message to the wired channel. The host's router resolves the
+session, writes to `inbound.db`, and calls `wakeContainer(session)`.
+
+- In **direct mode** (`USE_CONTAINERS=false`): `runner.ts` dispatches to
+  `direct-runner.wakeContainer`, which spawns `bun run container/agent-runner/src/index.ts`
+  with `AGENT_WORKSPACE_DIR=<session dir>`.
+- In **container mode** (`USE_CONTAINERS=true`, or unset): same call
+  reaches `container-runner.wakeContainer` and starts a Docker container.
+
+The agent-runner reads `${AGENT_WORKSPACE_DIR}/inbound.db`, calls Claude,
+writes to `outbound.db`, and the host delivers back through the adapter.
+
+---
+
+## Spec
+
+### Runtime mode — `USE_CONTAINERS`
+
+| Value | Behaviour |
+|-------|-----------|
+| `false` (default) | Agent-runner spawned as a direct `bun` subprocess. No Docker required. |
+| `true` (or unset in legacy setups — see note) | Original Docker container behaviour. |
+
+**Default:** the branch ships with `USE_CONTAINERS !== 'false'` semantics
+(`src/index.ts:18`). Set the env var explicitly to opt out.
+
+**Dispatch layer:** `src/runner.ts` reads the flag once at module load
+and re-exports `wakeContainer` / `killContainer` / `isContainerRunning`
+from the matching backend. Every call site (router, host-sweep,
+container-restart, approvals primitive, groups CLI, self-mod) imports
+from `./runner.js` — flipping the flag actually flips the runtime path.
+
+`buildAgentGroupImage` stays on `container-runner.ts` because it's
+inherently Docker-bound; the two paths that call it (groups CLI rebuild
+and self-mod `install_packages`) only fire on explicit user action.
+
+### Config file — `~/.config/nanoclaw/config.json`
+
+| Key | Default | Effect |
+|-----|---------|--------|
+| `ASSISTANT_NAME` | `Andy` | Agent display name + default trigger (`@<name>`) |
+| `TZ` | system tz → `UTC` | IANA timezone for scheduling and formatting |
+| `ONECLI_URL` | *(empty)* | OneCLI Agent Vault base URL |
+| `ONECLI_API_KEY` | *(empty)* | OneCLI API key (masked in `ncl config show`) |
+| `CONTAINER_TIMEOUT` | `1800000` | Session timeout in ms |
+| `MAX_CONCURRENT_AGENTS` | `5` | Max concurrent agent sessions (alias for the internal `MAX_CONCURRENT_CONTAINERS`) |
+
+**Precedence (highest → lowest):**
+
+```
+process.env > .env > ~/.config/nanoclaw/config.json > built-in default
+```
+
+A value set via `ncl config set` only matters if neither `process.env`
+nor `.env` already set the same key. This matches existing user
+expectations — env vars stay authoritative for production deployments.
+
+### CLI — `ncl config`
+
+```
+ncl config show              # table of all keys + values + sources
+ncl config get --key <K>     # single key
+ncl config set --key <K> --value <V>
+ncl config reset --key <K>   # remove from config.json → falls back to default
+```
+
+Numeric keys (`CONTAINER_TIMEOUT`, `MAX_CONCURRENT_AGENTS`) are coerced
+from string at write time. Unknown keys are rejected.
+
+---
+
+## What changed (vs. trunk)
+
+```
+docs/no-container-cli-config.md       (this file)
+src/cli/resources/config.ts            (new) — ncl config show/get/set/reset
+src/cli/resources/index.ts             (+1)  — barrel import
+src/config.ts                          (+22) — JSON layer + MAX_CONCURRENT_AGENTS alias
+src/direct-runner.ts                   (new) — bun-subprocess equivalent of container-runner
+src/runner.ts                          (new) — dispatcher: container-runner | direct-runner
+src/index.ts                           (+6)  — gate Docker startup behind USE_CONTAINERS
+src/router.ts                          (~1)  — wakeContainer from runner.js
+src/host-sweep.ts                      (~1)  — wake/kill/isRunning from runner.js
+src/container-restart.ts               (~1)  — wake/kill/isRunning from runner.js
+src/modules/approvals/primitive.ts     (~1)  — wakeContainer from runner.js
+src/cli/resources/groups.ts            (~1)  — kill/wake from runner.js
+src/modules/self-mod/apply.ts          (~1)  — kill/wake from runner.js
+container/agent-runner/src/{config,index,db/connection,cli/ncl,mcp-tools/core,providers/claude,formatter}.ts
+                                              — replace hardcoded /workspace/* with AGENT_WORKSPACE_DIR
 ```
 
 ---
 
-## Comparison: Container vs Direct Mode
+## Verification
 
-| Aspect | Container Mode (original) | Direct Mode (this branch) |
-|--------|--------------------------|--------------------------|
-| Runtime | Docker | bun |
-| Isolation | Full OS-level container | Process-level only |
-| Setup | Docker Desktop required | bun required |
-| Resource limits | Docker limits (CPU/mem) | None (host limits) |
-| Security | OneCLI Agent Vault | Same (Vault untested) |
-| Speed | Slower (container start ~2s) | Faster (process start ~200ms) |
-| Windows support | Needs Docker Desktop | Native (if bun installed) |
-| Production readiness | ✅ | ⚠️ Prototype |
+- `pnpm run build` — TypeScript clean
+- `pnpm test --run` — 326/326 host tests pass
+- `USE_CONTAINERS=false` → `runner.wakeContainer === direct-runner.wakeContainer`
+- `USE_CONTAINERS=true` → `runner.wakeContainer === container-runner.wakeContainer`
+- `ncl config set --key ASSISTANT_NAME --value Leo` → next host start resolves `ASSISTANT_NAME='Leo'`
 
 ---
 
-## Files Changed Summary
+## Known limitations
 
-```
-12 files changed, 428 insertions(+), 22 deletions(-)
+These are intentionally out of scope for the "easy install" goal — pick
+them up when there's a concrete use case.
 
-Modified:
-  container/agent-runner/src/cli/ncl.ts
-  container/agent-runner/src/config.ts
-  container/agent-runner/src/db/connection.ts
-  container/agent-runner/src/formatter.ts
-  container/agent-runner/src/index.ts
-  container/agent-runner/src/mcp-tools/core.ts
-  container/agent-runner/src/providers/claude.ts
-  src/cli/resources/index.ts
-  src/config.ts
-  src/index.ts
-
-New:
-  src/cli/resources/config.ts   (+176 lines)
-  src/direct-runner.ts          (+213 lines)
-```
+- **No process isolation** in direct mode — the agent-runner runs as the
+  host user. Don't expose direct mode to untrusted senders.
+- **No resource limits** — Docker provided CPU/memory ceilings; direct
+  mode inherits host limits.
+- **`cleanupOrphans()` in direct mode is in-memory only** — children of a
+  prior host process aren't tracked. They'll exit on their own (no input
+  arrives, container-runner-style heartbeat sweep still applies via
+  host-sweep) but won't be force-killed across host restarts.
+- **OneCLI vault in direct mode untested end-to-end.** `ONECLI_URL` /
+  `ONECLI_API_KEY` are forwarded to the spawned bun process, but
+  per-request secret injection (which depends on OneCLI's HTTP proxy +
+  CA cert) hasn't been validated in this mode.
+- **`additionalMounts` not implemented in direct mode** — see TODO in
+  `src/direct-runner.ts`. Container mode handles this via Docker `-v`.
+- **`ncl config show` source label** marks a value from `.env` as
+  `default`. Cosmetic only; the resolved value is still correct.

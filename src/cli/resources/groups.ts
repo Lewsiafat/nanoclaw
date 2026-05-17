@@ -1,5 +1,6 @@
 import type { McpServerConfig } from '../../container-config.js';
-import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
+import { buildAgentGroupImage } from '../../container-runner.js';
+import { killContainer, wakeContainer } from '../../runner.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { getSession } from '../../db/sessions.js';
 import { writeSessionMessage } from '../../session-manager.js';

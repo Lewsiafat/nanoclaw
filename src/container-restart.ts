@@ -4,7 +4,7 @@
  * Writes an on_wake message to each session, kills the container, then
  * wakes a fresh container via the onExit callback — race-free.
  */
-import { isContainerRunning, killContainer, wakeContainer } from './container-runner.js';
+import { isContainerRunning, killContainer, wakeContainer } from './runner.js';
 import { getSession, getSessionsByAgentGroup } from './db/sessions.js';
 import { log } from './log.js';
 import { writeSessionMessage } from './session-manager.js';

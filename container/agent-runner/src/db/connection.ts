@@ -20,9 +20,10 @@
 import { Database } from 'bun:sqlite';
 import fs from 'fs';
 
-const DEFAULT_INBOUND_PATH = '/workspace/inbound.db';
-const DEFAULT_OUTBOUND_PATH = '/workspace/outbound.db';
-const DEFAULT_HEARTBEAT_PATH = '/workspace/.heartbeat';
+const _WORKSPACE = process.env.AGENT_WORKSPACE_DIR || '/workspace';
+const DEFAULT_INBOUND_PATH = `${_WORKSPACE}/inbound.db`;
+const DEFAULT_OUTBOUND_PATH = `${_WORKSPACE}/outbound.db`;
+const DEFAULT_HEARTBEAT_PATH = `${_WORKSPACE}/.heartbeat`;
 
 let _inbound: Database | null = null;
 let _outbound: Database | null = null;

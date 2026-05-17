@@ -25,7 +25,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import { loadConfig } from './config.js';
+import { loadConfig, WORKSPACE_DIR } from './config.js';
 import { buildSystemPromptAddendum } from './destinations.js';
 // Providers barrel — each enabled provider self-registers on import.
 // Provider skills append imports to providers/index.ts.
@@ -37,7 +37,7 @@ function log(msg: string): void {
   console.error(`[agent-runner] ${msg}`);
 }
 
-const CWD = '/workspace/agent';
+const CWD = `${WORKSPACE_DIR}/agent`;
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -53,9 +53,9 @@ async function main(): Promise<void> {
   // memory lives in /workspace/agent/CLAUDE.local.md (auto-loaded).
   const instructions = buildSystemPromptAddendum(config.assistantName || undefined);
 
-  // Discover additional directories mounted at /workspace/extra/*
+  // Discover additional directories mounted at <workspace>/extra/*
   const additionalDirectories: string[] = [];
-  const extraBase = '/workspace/extra';
+  const extraBase = `${WORKSPACE_DIR}/extra`;
   if (fs.existsSync(extraBase)) {
     for (const entry of fs.readdirSync(extraBase)) {
       const fullPath = path.join(extraBase, entry);
